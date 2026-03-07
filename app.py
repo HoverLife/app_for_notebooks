@@ -347,6 +347,14 @@ class LotParser:
                 normalized[nk] = v
         return normalized
 
+    def _estimate_condition(
+        self,
+        text: str,
+        matrix_issues: str = "",
+        defect_1: str = "",
+        defect_2: str = "",
+        **kwargs,
+    ) -> str:
     def _estimate_condition(self, text: str, matrix_issues: str = "", defect_1: str = "", defect_2: str = "") -> str:
         low = text.lower()
         issues_low = f"{matrix_issues} {defect_1} {defect_2}".lower()
@@ -414,6 +422,57 @@ class LotParser:
         if not row.get("НомерЛота"):
             return False
         return score >= 2 and ratio >= self.options.quality_threshold
+
+    def _postprocess_hardware_fields(self, row: Dict[str, object], attrs: Dict[str, str]) -> None:
+        """Нормализация и дочистка аппаратных полей в отдельных колонках."""
+        proc = str(row.get("Процессор", "") or "").strip()
+        freq = str(row.get("ЧастотаПроцессора", "") or "").strip()
+        ram = str(row.get("ОЗУ", "") or "").strip()
+        storage = str(row.get("Накопитель", "") or "").strip()
+
+        if not freq and proc:
+            m_freq = re.search(r"(\d+[\.,]?\d*\s*ГГц)", proc, re.IGNORECASE)
+            if m_freq:
+                freq = m_freq.group(1).replace(",", ".")
+                proc = re.sub(r"\(?\d+[\.,]?\d*\s*ГГц\)?", "", proc, flags=re.IGNORECASE).strip(" -,")
+
+        if not proc:
+            # fallback из model/name строки
+            m_proc = re.search(r"(intel[^/\n]+|amd[^/\n]+|apple\s+m\d[^/\n]*)", row.get("СыройТекст", ""), re.IGNORECASE)
+            if m_proc:
+                proc = m_proc.group(1).strip()
+
+        if ram:
+            ram = ram.replace("Гб", "GB").replace("гб", "GB")
+            ram = re.sub(r"\s+", " ", ram)
+
+        if storage:
+            storage = storage.replace("Гб", "GB").replace("гб", "GB")
+            storage = storage.replace("Тб", "TB").replace("тб", "TB")
+            storage = re.sub(r"\s+", " ", storage)
+
+        # Соберём порты из видеовходов/выходов и явного поля
+        ports = []
+        for k in ["Видеовходы", "Видеовыходы", "Порты"]:
+            val = str(row.get(k, "") or "")
+            if val:
+                for part in re.split(r"[,/;]", val):
+                    p = part.strip()
+                    if p:
+                        ports.append(p)
+        uniq_ports = []
+        seen = set()
+        for prt in ports:
+            u = prt.upper()
+            if u not in seen:
+                seen.add(u)
+                uniq_ports.append(prt)
+
+        row["Процессор"] = proc
+        row["ЧастотаПроцессора"] = freq
+        row["ОЗУ"] = ram
+        row["Накопитель"] = storage
+        row["Порты"] = ", ".join(uniq_ports)
 
     def parse_lot_block(
         self,
@@ -483,6 +542,7 @@ class LotParser:
         address, city_pickup = self._extract_address(t)
         row["АдресСамовывоза"] = address
         row["ГородСамовывоза"] = city_pickup
+        self._postprocess_hardware_fields(row, attrs)
 
         extras = {}
         mapped = {
@@ -493,6 +553,14 @@ class LotParser:
             "ПроблемыМатрицы",
             "Дефект 1",
             "Дефект 2",
+            "Дефект1",
+            "Дефект2",
+            "Диагональ",
+            "Процессор",
+            "ЧастотаПроцессора",
+            "ОЗУ",
+            "Накопитель",
+            "Порты",
             "Диагональ",
             "Процессор",
             "ЧастотаПроцессора",
