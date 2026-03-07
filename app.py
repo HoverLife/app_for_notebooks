@@ -47,11 +47,17 @@ BASE_COLUMNS_RU = [
     "АдресСамовывоза",
     "ГородСамовывоза",
     "Видеовходы",
+    "Видеовыходы",
     "ТипПитания",
     "ПитаниеВКомплекте",
     "ПроблемыМатрицы",
     "Дефект1",
     "Дефект2",
+    "Процессор",
+    "ЧастотаПроцессора",
+    "ОЗУ",
+    "Накопитель",
+    "Порты",
     "СостояниеОценка",
     "КлючевыеСлова",
     "ПолнотаЗаполнения",
@@ -75,6 +81,7 @@ KNOWN_BRANDS = {
     "IIYAMA",
     "VIEWSONIC",
     "SONY",
+    "APPLE",
 }
 
 
@@ -214,6 +221,12 @@ class LotParser:
 
     def _extract_brand(self, text: str) -> str:
         up = text.upper()
+        up = up.replace("АРРLE", "APPLE")
+        for b in KNOWN_BRANDS:
+            if re.search(rf"\b{re.escape(b)}\b", up):
+                return b
+        if re.search(r"\bMACBOOK\b|\bIPHONE\b|\bIMAC\b", up):
+            return "APPLE"
         for b in KNOWN_BRANDS:
             if re.search(rf"\b{re.escape(b)}\b", up):
                 return b
@@ -270,6 +283,10 @@ class LotParser:
             for ln in lines[start : min(start + 6, len(lines))]:
                 if re.search(r"^\d+\s*---", ln):
                     break
+                if re.search(r"^[-]+$", ln):
+                    break
+                if re.fullmatch(r"[A-Z0-9\-]{8,}", ln):
+                    break
                 addr.append(ln)
         address = ", ".join(addr)
         m_city = re.search(r"\bг\.\s*([А-Яа-яA-Za-z\-]+)", address)
@@ -278,6 +295,67 @@ class LotParser:
 
     def _extract_attrs(self, text: str) -> Dict[str, str]:
         attrs: Dict[str, str] = {}
+        work = text.replace("\\", "/")
+        # Всё, что после второго --- обычно и есть блок характеристик
+        parts = work.split("---", 2)
+        if len(parts) == 3:
+            work = parts[2]
+        chunks = [c.strip() for c in re.split(r"\s*/\s*", work) if c.strip()]
+        for ch in chunks:
+            ch = re.sub(r"\s+", " ", ch).strip(" -")
+            if not ch:
+                continue
+            # Явная форма Ключ-Значение
+            if "-" in ch:
+                key, val = ch.split("-", 1)
+                key = key.strip(" -")
+                val = val.strip(" -")
+                # Если в ключе остался мусорный префикс до последнего пробела-серийника — чистим
+                key = re.sub(r"^[A-Z0-9\-]{8,}\s+", "", key)
+                key = re.sub(r"^\d+\s*", "", key)
+                key = key.replace("---", "").strip()
+                if len(key) >= 2 and len(val) >= 1:
+                    attrs[key] = val
+                continue
+            # Отдельные порты без дефиса (например DisplayPort/Type-c)
+            if re.search(r"displayport|type-c|usb|hdmi|dvi|vga", ch, re.IGNORECASE):
+                if re.fullmatch(r"[A-Za-z0-9\-]{2,10}", ch) and "Видеовходы" in attrs:
+                    attrs["Видеовходы"] = f"{attrs['Видеовходы']}/{ch}"
+                    continue
+                attrs.setdefault("Порты", "")
+                attrs["Порты"] = ", ".join([x for x in [attrs["Порты"], ch] if x]).strip(", ")
+
+        # Нормализация некоторых ключей
+        renames = {
+            "Сетевой шнур или блок питания в наличии": "ПитаниеВКомплекте",
+            "Наличие сетевого шнура": "ПитаниеВКомплекте",
+            "Затемнения и полосы на матрице": "ПроблемыМатрицы",
+            "Видеовыходы": "Видеовыходы",
+            "Видеовходы": "Видеовходы",
+            "Тип питания": "ТипПитания",
+            "Оперативная память": "ОЗУ",
+            "Жесткий диск": "Накопитель",
+            "Процессор": "Процессор",
+            "Процессор частота": "ЧастотаПроцессора",
+        }
+        normalized: Dict[str, str] = {}
+        for k, v in attrs.items():
+            nk = renames.get(k, k)
+            if nk in normalized and v not in normalized[nk]:
+                normalized[nk] = f"{normalized[nk]}, {v}"
+            else:
+                normalized[nk] = v
+        return normalized
+
+    def _estimate_condition(self, text: str, matrix_issues: str = "", defect_1: str = "", defect_2: str = "") -> str:
+        low = text.lower()
+        issues_low = f"{matrix_issues} {defect_1} {defect_2}".lower()
+        if any(x in low for x in ["не работает", "разбит", "не включается"]):
+            return "Плохое"
+        # Если явно написано что проблем с матрицей нет — не считаем это плохим состоянием
+        if matrix_issues and re.search(r"\bнет\b", matrix_issues.lower()):
+            pass
+        elif any(x in issues_low for x in ["полос", "бит", "дефект", "трещ", "затемнен"]):
         for k, v in re.findall(r"([А-Яа-яA-Za-z0-9\-\s]+)-\s*([^/\n]+)", text):
             key = re.sub(r"\s+", " ", k).strip(" -")
             val = re.sub(r"\s+", " ", v).strip(" -")
@@ -376,6 +454,18 @@ class LotParser:
             "АдресСамовывоза": "",
             "ГородСамовывоза": "",
             "Видеовходы": attrs.get("Видеовходы", ""),
+            "Видеовыходы": attrs.get("Видеовыходы", ""),
+            "ТипПитания": attrs.get("ТипПитания", ""),
+            "ПитаниеВКомплекте": attrs.get("ПитаниеВКомплекте", ""),
+            "ПроблемыМатрицы": attrs.get("ПроблемыМатрицы", ""),
+            "Дефект1": attrs.get("Дефект 1", ""),
+            "Дефект2": attrs.get("Дефект 2", ""),
+            "Процессор": attrs.get("Процессор", ""),
+            "ЧастотаПроцессора": attrs.get("ЧастотаПроцессора", ""),
+            "ОЗУ": attrs.get("ОЗУ", ""),
+            "Накопитель": attrs.get("Накопитель", ""),
+            "Порты": attrs.get("Порты", ""),
+            "СостояниеОценка": "",
             "ТипПитания": attrs.get("Тип питания", ""),
             "ПитаниеВКомплекте": attrs.get("Сетевой шнур или блок питания в наличии", ""),
             "ПроблемыМатрицы": attrs.get("Затемнения и полосы на матрице", ""),
@@ -397,6 +487,18 @@ class LotParser:
         extras = {}
         mapped = {
             "Видеовходы",
+            "Видеовыходы",
+            "ТипПитания",
+            "ПитаниеВКомплекте",
+            "ПроблемыМатрицы",
+            "Дефект 1",
+            "Дефект 2",
+            "Диагональ",
+            "Процессор",
+            "ЧастотаПроцессора",
+            "ОЗУ",
+            "Накопитель",
+            "Порты",
             "Тип питания",
             "Сетевой шнур или блок питания в наличии",
             "Затемнения и полосы на матрице",
@@ -409,6 +511,24 @@ class LotParser:
                 extras[k] = v
         row["ИзвлеченныеПараметрыJSON"] = json.dumps(extras, ensure_ascii=False)
 
+        row["СостояниеОценка"] = self._estimate_condition(
+            t,
+            matrix_issues=str(row.get("ПроблемыМатрицы", "")),
+            defect_1=str(row.get("Дефект1", "")),
+            defect_2=str(row.get("Дефект2", "")),
+        )
+
+        keys = [
+            row["Бренд"],
+            row["Модель"],
+            row["ТипТехники"],
+            row["Процессор"],
+            row["ОЗУ"],
+            row["Накопитель"],
+            row["ПроблемыМатрицы"],
+            row["Дефект1"],
+            row["Дефект2"],
+        ]
         keys = [row["Бренд"], row["Модель"], row["ТипТехники"], row["ПроблемыМатрицы"], row["Дефект1"], row["Дефект2"]]
         row["КлючевыеСлова"] = ", ".join([str(k) for k in keys if str(k).strip()])[:250]
 
@@ -815,6 +935,28 @@ def run_sample_tests(logger: Optional[logging.Logger] = None) -> str:
         "serial": bool(row and row["СерийныйНомер"] == "GLXK5HA053007"),
         "цена": bool(row and row["СтартоваяЦенаРуб"] == 700),
     }
+
+    pc_sample = (
+        "11--- (Москва) ПК APPLE Mac mini s/n: C02XXX111 --- Оперативная память-8GB / "
+        "Процессор-Apple M1 / Жесткий диск-256GB SSD / Видеовыходы-HDMI/DisplayPort/Type-c / "
+        "Наличие сетевого шнура-да / Следы эксплуатации.\n50000\nг. Москва, ул. Пример, д.1"
+    )
+    pc_row = p.parse_lot_block(
+        pc_sample,
+        source_file="pc.pdf",
+        source_page=1,
+        processed_at=datetime.now(),
+        header_city="Москва",
+        header_dt=datetime(2026, 3, 16, 12, 0),
+    )
+    checks.update(
+        {
+            "apple_brand": bool(pc_row and pc_row["Бренд"] == "APPLE"),
+            "процессор": bool(pc_row and "M1" in str(pc_row["Процессор"])),
+            "озу": bool(pc_row and "8GB" in str(pc_row["ОЗУ"])),
+            "накопитель": bool(pc_row and "256GB" in str(pc_row["Накопитель"])),
+        }
+    )
 
     called = {"ok": False}
     real = p._ocr_page
