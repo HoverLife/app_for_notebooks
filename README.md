@@ -1,6 +1,13 @@
-# PDF Lot Parser
+# Парсер лотов PDF
 
-Минималистичное настольное Windows-приложение (PyQt5) для парсинга аукционных PDF-карточек техники и экспорта в Excel/CSV.
+Компактное настольное Windows-приложение (PyQt5) для парсинга аукционных PDF и выгрузки в Excel.
+
+## Что улучшено в текущей версии
+
+- Усилен фильтр мусорных/служебных строк (табличные шапки не попадают в итог).
+- Все основные столбцы в Excel — **на русском языке**.
+- Добавлена пост-обработка качества строк (`ПолнотаЗаполнения`, `ФлагиКачества`) и отсев нечитабельных записей.
+- Фото **не выгружаются** в Excel и не сохраняются в отдельные файлы (по запросу).
 
 ## 1) Установка
 
@@ -10,66 +17,64 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-## 2) Установка Tesseract OCR на Windows
+## 2) Установка Tesseract OCR (Windows)
 
-1. Скачайте установщик Tesseract OCR (например, UB Mannheim build):  
+1. Скачайте Tesseract OCR (например, UB Mannheim):
    https://github.com/UB-Mannheim/tesseract/wiki
-2. Установите в стандартную папку, например:
+2. Установите, например, в:
    `C:\Program Files\Tesseract-OCR\tesseract.exe`
-3. Добавьте путь в `PATH` (или оставьте стандартный путь — приложение попробует найти его автоматически).
-4. Для русского OCR убедитесь, что есть `tessdata\rus.traineddata`.
+3. Добавьте путь в `PATH`.
+4. Проверьте, что `tessdata\rus.traineddata` существует.
 
 ## 3) Запуск
 
-### GUI (по умолчанию)
+### GUI
 
 ```bash
 python app.py
 ```
 
-### CLI режим
+### CLI
 
 ```bash
-python app.py --no-gui --input "C:\path\to\pdf_folder" --output "output\parsed_lots.xlsx"
+python app.py --no-gui --input "C:\path\to\pdf_folder" --output "output\lots_clean.xlsx"
 ```
 
 Дополнительно:
 - `--ocr-mode Auto|Always|Never`
-- `--no-images`
 - `--save-csv`
+- `--quality-threshold 0.35`
 - `--run-sample-tests`
 
-## 4) Сборка `.exe` через PyInstaller
+## 4) Сборка `.exe` (PyInstaller)
 
-### Базовая команда (оконный режим, без консоли)
+Базовая команда:
 
 ```bash
 pyinstaller --onefile --windowed app.py
 ```
 
-### Пример со встраиванием `tesseract.exe` и `tessdata`
+С встраиванием `tesseract.exe` и `tessdata`:
 
 ```bash
 pyinstaller --onefile --windowed --add-binary "C:\Path\To\Tesseract-OCR\tesseract.exe;." --add-data "C:\Path\To\Tesseract-OCR\tessdata;tessdata" app.py
 ```
 
-> После сборки запускайте `dist\app.exe` двойным кликом (через ярлык/Пуск/рабочий стол).
-
 ## 5) Ярлык и установщик
 
-### Создать ярлык вручную
+### Ярлык вручную
 
 1. ПКМ по `dist\app.exe` → **Отправить** → **Рабочий стол (создать ярлык)**.
-2. Для меню Пуск: скопируйте ярлык в `%AppData%\Microsoft\Windows\Start Menu\Programs`.
+2. Для Пуска перенесите ярлык в `%AppData%\Microsoft\Windows\Start Menu\Programs`.
 
-### Минимальный пример Inno Setup
+### Минимальный Inno Setup
 
 ```ini
 [Setup]
-AppName=PDF Lot Parser
-AppVersion=1.0
+AppName=Парсер лотов PDF
+AppVersion=1.1
 DefaultDirName={autopf}\PDFLotParser
-DefaultGroupName=PDF Lot Parser
+DefaultGroupName=Парсер лотов PDF
 OutputDir=.
 OutputBaseFilename=PDFLotParserSetup
 Compression=lzma
@@ -79,13 +84,9 @@ SolidCompression=yes
 Source: "dist\app.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\PDF Lot Parser"; Filename: "{app}\app.exe"
-Name: "{commondesktop}\PDF Lot Parser"; Filename: "{app}\app.exe"; Tasks: desktopicon
+Name: "{group}\Парсер лотов PDF"; Filename: "{app}\app.exe"
+Name: "{commondesktop}\Парсер лотов PDF"; Filename: "{app}\app.exe"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "Создать ярлык на рабочем столе"; GroupDescription: "Дополнительные ярлыки:";
 ```
-
-## 6) Подпись `.exe` (рекомендация)
-
-Для корпоративного распространения желательно подписать `app.exe` код-подписью (Authenticode), чтобы снизить предупреждения SmartScreen.
