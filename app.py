@@ -227,6 +227,9 @@ class LotParser:
                 return b
         if re.search(r"\bMACBOOK\b|\bIPHONE\b|\bIMAC\b", up):
             return "APPLE"
+        for b in KNOWN_BRANDS:
+            if re.search(rf"\b{re.escape(b)}\b", up):
+                return b
         return ""
 
     def _extract_item_type(self, text: str) -> str:
@@ -353,6 +356,19 @@ class LotParser:
         if matrix_issues and re.search(r"\bнет\b", matrix_issues.lower()):
             pass
         elif any(x in issues_low for x in ["полос", "бит", "дефект", "трещ", "затемнен"]):
+        for k, v in re.findall(r"([А-Яа-яA-Za-z0-9\-\s]+)-\s*([^/\n]+)", text):
+            key = re.sub(r"\s+", " ", k).strip(" -")
+            val = re.sub(r"\s+", " ", v).strip(" -")
+            if len(key) < 2 or len(val) < 1:
+                continue
+            if re.search(r"^\d+\s*---", key):
+                continue
+            attrs[key] = val
+        return attrs
+
+    def _estimate_condition(self, text: str) -> str:
+        low = text.lower()
+        if any(x in low for x in ["не работает", "разбит", "полосы", "дефект", "не включается"]):
             return "Плохое"
         if any(x in low for x in ["следы эксплуатации", "потертости", "потёртости", "царапины"]):
             return "Удовлетворительное"
@@ -450,6 +466,12 @@ class LotParser:
             "Накопитель": attrs.get("Накопитель", ""),
             "Порты": attrs.get("Порты", ""),
             "СостояниеОценка": "",
+            "ТипПитания": attrs.get("Тип питания", ""),
+            "ПитаниеВКомплекте": attrs.get("Сетевой шнур или блок питания в наличии", ""),
+            "ПроблемыМатрицы": attrs.get("Затемнения и полосы на матрице", ""),
+            "Дефект1": attrs.get("Дефект 1", ""),
+            "Дефект2": attrs.get("Дефект 2", ""),
+            "СостояниеОценка": self._estimate_condition(t),
             "КлючевыеСлова": "",
             "ПолнотаЗаполнения": 0.0,
             "ФлагиКачества": "",
@@ -477,6 +499,12 @@ class LotParser:
             "ОЗУ",
             "Накопитель",
             "Порты",
+            "Тип питания",
+            "Сетевой шнур или блок питания в наличии",
+            "Затемнения и полосы на матрице",
+            "Дефект 1",
+            "Дефект 2",
+            "Диагональ",
         }
         for k, v in attrs.items():
             if k not in mapped:
@@ -501,6 +529,7 @@ class LotParser:
             row["Дефект1"],
             row["Дефект2"],
         ]
+        keys = [row["Бренд"], row["Модель"], row["ТипТехники"], row["ПроблемыМатрицы"], row["Дефект1"], row["Дефект2"]]
         row["КлючевыеСлова"] = ", ".join([str(k) for k in keys if str(k).strip()])[:250]
 
         if not self._is_meaningful(row):
