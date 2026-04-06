@@ -26,6 +26,10 @@ from PIL import Image
 from dateutil import parser as date_parser
 from PyQt5 import QtCore, QtGui, QtWidgets
 
+# Подавляем шумные предупреждения MuPDF в stderr (например, structure tree warnings),
+# чтобы приложение не "захлёбывалось" бесконечным выводом при чтении проблемных PDF.
+fitz.TOOLS.mupdf_display_warnings(False)
+
 APP_TITLE = "Парсер лотов PDF"
 DEFAULT_OUTPUT_DIR = "output"
 DEFAULT_ERROR_FILE = "parsing_errors.csv"
@@ -347,14 +351,6 @@ class LotParser:
                 normalized[nk] = v
         return normalized
 
-    def _estimate_condition(
-        self,
-        text: str,
-        matrix_issues: str = "",
-        defect_1: str = "",
-        defect_2: str = "",
-        **kwargs,
-    ) -> str:
     def _estimate_condition(self, text: str, matrix_issues: str = "", defect_1: str = "", defect_2: str = "") -> str:
         low = text.lower()
         issues_low = f"{matrix_issues} {defect_1} {defect_2}".lower()
@@ -362,21 +358,10 @@ class LotParser:
             return "Плохое"
         # Если явно написано что проблем с матрицей нет — не считаем это плохим состоянием
         if matrix_issues and re.search(r"\bнет\b", matrix_issues.lower()):
-            pass
-        elif any(x in issues_low for x in ["полос", "бит", "дефект", "трещ", "затемнен"]):
-        for k, v in re.findall(r"([А-Яа-яA-Za-z0-9\-\s]+)-\s*([^/\n]+)", text):
-            key = re.sub(r"\s+", " ", k).strip(" -")
-            val = re.sub(r"\s+", " ", v).strip(" -")
-            if len(key) < 2 or len(val) < 1:
-                continue
-            if re.search(r"^\d+\s*---", key):
-                continue
-            attrs[key] = val
-        return attrs
-
-    def _estimate_condition(self, text: str) -> str:
-        low = text.lower()
-        if any(x in low for x in ["не работает", "разбит", "полосы", "дефект", "не включается"]):
+            if any(x in low for x in ["следы эксплуатации", "потертости", "потёртости", "царапины"]):
+                return "Удовлетворительное"
+            return "Хорошее"
+        if any(x in issues_low for x in ["полос", "бит", "дефект", "трещ", "затемнен"]):
             return "Плохое"
         if any(x in low for x in ["следы эксплуатации", "потертости", "потёртости", "царапины"]):
             return "Удовлетворительное"
@@ -524,12 +509,6 @@ class LotParser:
             "ОЗУ": attrs.get("ОЗУ", ""),
             "Накопитель": attrs.get("Накопитель", ""),
             "Порты": attrs.get("Порты", ""),
-            "СостояниеОценка": "",
-            "ТипПитания": attrs.get("Тип питания", ""),
-            "ПитаниеВКомплекте": attrs.get("Сетевой шнур или блок питания в наличии", ""),
-            "ПроблемыМатрицы": attrs.get("Затемнения и полосы на матрице", ""),
-            "Дефект1": attrs.get("Дефект 1", ""),
-            "Дефект2": attrs.get("Дефект 2", ""),
             "СостояниеОценка": self._estimate_condition(t),
             "КлючевыеСлова": "",
             "ПолнотаЗаполнения": 0.0,
@@ -561,18 +540,11 @@ class LotParser:
             "ОЗУ",
             "Накопитель",
             "Порты",
-            "Диагональ",
-            "Процессор",
-            "ЧастотаПроцессора",
-            "ОЗУ",
-            "Накопитель",
-            "Порты",
             "Тип питания",
             "Сетевой шнур или блок питания в наличии",
             "Затемнения и полосы на матрице",
             "Дефект 1",
             "Дефект 2",
-            "Диагональ",
         }
         for k, v in attrs.items():
             if k not in mapped:
@@ -597,7 +569,6 @@ class LotParser:
             row["Дефект1"],
             row["Дефект2"],
         ]
-        keys = [row["Бренд"], row["Модель"], row["ТипТехники"], row["ПроблемыМатрицы"], row["Дефект1"], row["Дефект2"]]
         row["КлючевыеСлова"] = ", ".join([str(k) for k in keys if str(k).strip()])[:250]
 
         if not self._is_meaningful(row):
@@ -623,7 +594,13 @@ class LotParser:
 
         for i in range(len(doc)):
             page = doc[i]
-            text = page.get_text("text") or ""
+            try:
+                text = page.get_text("text") or ""
+            except Exception as exc:
+                self.errors.append(
+                    ParseError(pdf_path.name, i + 1, None, f"Ошибка чтения текста страницы: {exc}", "")
+                )
+                text = ""
             if self.options.ocr_mode == "Always" or (self.options.ocr_mode == "Auto" and self._need_ocr(text)):
                 ocr = self._ocr_page(page)
                 if ocr.strip():
